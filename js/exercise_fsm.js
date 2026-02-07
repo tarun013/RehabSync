@@ -18,10 +18,10 @@ export class ExerciseFSM {
 
         // Fallback if service not ready
         this.defaultThresholds = {
-            squat: { stand: 170, depth: 100 }, // Relaxed stand (was 160)
-            bicep_curl: { extend: 165, flex: 50 }, // Relaxed extend (was 160)
-            shoulder_press: { start: 50, overhead: 150 }, // Relaxed start
-            neck: { tilt: 15, duration: 5000 }, // More sensitive tilt
+            squat: { stand: 165, depth: 130 }, // Relaxed stand (was 170), Relaxed depth (was 100) - 130 is much easier
+            bicep_curl: { extend: 165, flex: 50 },
+            shoulder_press: { start: 50, overhead: 150 },
+            neck: { tilt: 15, duration: 5000 },
             pushup: { arm_ext: 165, arm_flex: 90 }
         };
     }
@@ -151,46 +151,28 @@ export class ExerciseFSM {
         if (!shoulder || !elbow || !wrist) return { state: this.state, reps: this.reps, isValid: this.isValid };
 
         const angle = calculateAngle2D(shoulder, elbow, wrist);
-        const thres = this.getThresholds('bicep_curl');
 
-        // Helper: Check Upper Arm angle relative to vertical (Shoulder-Elbow vs Vertical)
-        // atan2(elbow.x - shoulder.x, elbow.y - shoulder.y) -> 0 is down
-        const upperArmAngle = Math.abs(Math.atan2(elbow.x - shoulder.x, elbow.y - shoulder.y) * 180 / Math.PI);
-        // Should be fairly vertical (< 30 deg swing)
+        // Simpler Thresholds
+        const EXTENDED_THRESHOLD = 150; // Arm down
+        const FLEXED_THRESHOLD = 60;   // Arm up
 
-        // State machine for Curl
-
-        switch (this.state) {
-            case 'neutral': // Extended position
-                if (angle > thres.extend - 10 && upperArmAngle < 40) { // Arm straight down
-                    // Only transition if angle decreases
-                }
-                if (angle < thres.extend - 10) {
-                    this.state = 'flexing';
-                    this.isValid = true;
-                }
-                break;
-            case 'flexing': // Moving up
-                if (upperArmAngle > 50) this.isValid = false; // Too much swing
-
-                if (angle < thres.flex) this.state = 'peak';
-                else if (angle > thres.extend) {
-                    this.state = 'neutral'; // Aborted rep, went back down
-                    this.isValid = true;
-                }
-                break;
-            case 'peak': // Top of the curl
-                if (angle > thres.flex + 10) this.state = 'extending';
-                break;
-            case 'extending': // Moving down
-                if (angle > thres.extend) {
-                    this.state = 'neutral';
-                    if (this.isValid) {
-                        this.reps++;
-                    }
-                } else if (angle < thres.flex) this.state = 'peak'; // Failed to extend, went back up
-                break;
+        // State Machine
+        if (this.state === 'neutral' || this.state === 'extending') { // 'down' state
+            if (angle < FLEXED_THRESHOLD) {
+                this.state = 'flexing'; // reached top
+            }
+        } else if (this.state === 'flexing') { // 'up' state
+            if (angle > EXTENDED_THRESHOLD) {
+                this.state = 'neutral'; // reached bottom
+                this.reps++;
+            }
+        } else {
+            // Fallback
+            this.state = 'neutral';
         }
+
+        // Always valid in this simple mode
+        this.isValid = true;
 
         return { state: this.state, reps: this.reps, currentAngle: angle, isValid: this.isValid };
     }

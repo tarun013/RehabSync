@@ -59,6 +59,18 @@ let smoother;
 // let visualGuide; 
 let adaptiveService;
 
+// Summary Elements
+const summaryView = document.getElementById('summary-view');
+const summaryReps = document.getElementById('summary-reps');
+const summaryTime = document.getElementById('summary-time');
+const summaryAccuracy = document.getElementById('summary-accuracy');
+const summaryHomeBtn = document.getElementById('summary-home-btn');
+
+// Session Stats
+let sessionStartTime = 0;
+let sessionTotalActiveFrames = 0;
+let sessionTotalGoodFrames = 0;
+
 let frameCount = 0;
 let lastFpsTime = Date.now();
 
@@ -295,8 +307,15 @@ startWorkoutBtn.addEventListener('click', async () => {
     await startCameraSequence();
 });
 
-backToDashBtn.addEventListener('click', () => {
+// --- DASHBOARD LOGIC ---
+function showDashboard() {
     switchView('dashboard-view');
+    userNameDisplay.innerText = currentUser.name || "Guest";
+    // Greeting is static "Hello" now
+}
+
+backToDashBtn.addEventListener('click', () => {
+    showDashboard();
     // Consider pausing camera here
 });
 
@@ -378,6 +397,11 @@ async function startCameraSequence() {
         statusText.innerText = 'Starting camera...';
         await camera.start();
         renderer.setSize(videoElement.videoWidth, videoElement.videoHeight);
+        // Start Loop
+        videoElement.play();
+
+        // Initial UI reset
+        setExerecise(currentExercise); // This also calls updateGuideText
         statusText.innerText = 'Active';
         statusDot.classList.add('active');
         statusDot.style.backgroundColor = '#00ff88';
@@ -429,6 +453,11 @@ function resetSession() {
     feedbackDisplay.innerText = "Ready for new set";
     feedbackDisplay.style.color = '#ffffff';
     overlayFeedback.classList.remove('visible'); // Ensure overlay is hidden
+
+    // Reset Session Stats
+    sessionStartTime = Date.now();
+    sessionTotalActiveFrames = 0;
+    sessionTotalGoodFrames = 0;
 }
 
 function onResults(results) {
@@ -512,7 +541,11 @@ function onResults(results) {
         // Only track score frames when active (not neutral)
         if (fsmState.state !== 'neutral' && fsmState.state !== 'holding' && !isSetComplete) {
             activeFrames++;
-            if (isFrameGood) goodFrames++;
+            sessionTotalActiveFrames++;
+            if (isFrameGood) {
+                goodFrames++;
+                sessionTotalGoodFrames++;
+            }
         }
 
         // --- REP COMPLETION LOGIC ---
@@ -537,11 +570,16 @@ function onResults(results) {
             if (fsmState.reps >= targetReps && !isSetComplete) {
                 isSetComplete = true;
                 audio.speak("Set Complete! Great job.");
-                // Victory sound could be added to audio.js
                 audio.playChirp('good');
                 feedbackDisplay.innerText = "SET COMPLETE!";
                 feedbackDisplay.style.color = "#00ffff";
-                overlayFeedback.classList.remove('visible'); // Hide any lingering feedback
+                overlayFeedback.classList.remove('visible');
+
+                // Show Summary Screen
+                const durationMs = Date.now() - sessionStartTime;
+                const accuracy = Math.round((sessionTotalGoodFrames / (sessionTotalActiveFrames || 1)) * 100);
+                showSummary(fsmState.reps, durationMs, accuracy);
+
             } else {
                 audio.playChirp('good');
             }
@@ -600,18 +638,114 @@ function onResults(results) {
 }
 
 
+
 function updateFPS() {
     frameCount++;
     const now = Date.now();
     if (now - lastFpsTime >= 1000) {
-        fpsDisplay.innerText = `${frameCount} FPS`;
+        if (fpsDisplay) fpsDisplay.innerText = `${frameCount} FPS`;
         frameCount = 0;
         lastFpsTime = now;
     }
 }
 
+function showSummary(reps, durationMs, accuracy) {
+    if (camera && camera.isActive) camera.stop();
+    statusText.innerText = 'Completed';
+    statusDot.style.backgroundColor = '#00ccff';
+
+    // Format stats
+    const minutes = Math.floor(durationMs / 60000);
+    const seconds = Math.floor((durationMs % 60000) / 1000);
+    const timeString = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+    if (summaryReps) summaryReps.innerText = reps;
+    if (summaryTime) summaryTime.innerText = timeString;
+    if (summaryAccuracy) summaryAccuracy.innerText = `${accuracy}%`;
+
+    // Save to LocalStorage for Dashboard
+    const sessionData = {
+        exercise: currentExercise,
+        reps: reps,
+        time: timeString,
+        accuracy: accuracy,
+        date: new Date().toISOString()
+    };
+    localStorage.setItem('lastSession', JSON.stringify(sessionData));
+    updateLastSessionUI();
+
+    // Show View
+    if (summaryView) {
+        summaryView.style.display = 'flex';
+        summaryView.classList.add('active');
+    }
+}
+
+function updateLastSessionUI() {
+    try {
+        const data = JSON.parse(localStorage.getItem('lastSession'));
+        if (data) {
+            const exEl = document.getElementById('last-session-exercise');
+            const repsEl = document.getElementById('last-session-reps');
+            const timeEl = document.getElementById('last-session-time');
+            const accEl = document.getElementById('last-session-accuracy');
+
+            if (exEl) exEl.innerText = data.exercise.replace('_', ' ').toUpperCase();
+            if (repsEl) repsEl.innerText = `${data.reps} Reps`;
+            if (timeEl) timeEl.innerText = data.time;
+            if (accEl) accEl.innerText = `${data.accuracy}% Accuracy`;
+        }
+    } catch (e) {
+        console.error("Error loading last session", e);
+    }
+}
+
+if (summaryHomeBtn) {
+    summaryHomeBtn.addEventListener('click', () => {
+        if (summaryView) {
+            summaryView.style.display = 'none';
+            summaryView.classList.remove('active');
+        }
+        showDashboard();
+    });
+}
+
 // Initial static render
 // renderStaticSteps(currentExercise); // Removed
 
-// Start app
-// window.addEventListener('DOMContentLoaded', init); // Removed auto-init
+// --- INITIALIZATION ---
+async function startApp() {
+    console.log("App Starting...");
+
+    // Initialize DB
+    await db.init();
+
+    // Load persisted session data
+    updateLastSessionUI();
+
+    // Load Profiles
+    const profiles = await ProfileService.getAllProfiles();
+    renderProfileList(); // Renders profiles to UI
+
+    // Check for existing user or show profile selection
+    const savedUserId = localStorage.getItem('lastUserId');
+    if (savedUserId) {
+        console.log("Found saved user ID:", savedUserId);
+        const user = await ProfileService.getProfile(savedUserId);
+        if (user) {
+            loginUser(user);
+        } else {
+            switchView('profile-view');
+        }
+    } else {
+        switchView('profile-view');
+    }
+}
+
+// Check if DOM is already ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startApp);
+} else {
+    // Already ready, run immediately
+    startApp();
+}

@@ -79,39 +79,43 @@ button {
     align-items: center;
 }
 
+/* UI Layer */
 .ui-layer {
-    width: 96%;
-    height: 96%;
-    display: grid;
-    grid-template-rows: auto 1fr;
-    gap: 20px;
-    position: relative;
-    z-index: 1;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    /* Allow clicks to pass through to underlying if needed, but mostly we have pointer-events: auto on children */
+    display: flex;
+    flex-direction: column;
 }
 
-/* HEADER */
-header {
+.workout-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 15px 30px;
+    padding: 15px 25px;
+    background: rgba(10, 10, 15, 0.85);
+    /* Slightly more opaque */
+    backdrop-filter: blur(15px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    pointer-events: auto;
+    position: relative;
+    height: 80px;
+    box-sizing: border-box;
 }
 
 .header-left {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 15px;
+    flex: 1;
+    /* Take up space to help center the H1 */
 }
 
-h1 {
-    font-size: 1.8rem;
-    font-weight: 700;
-    letter-spacing: 1px;
-    background: linear-gradient(90deg, var(--primary), var(--secondary));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin: 0;
-}
+/* Old app-title removed, see bottom of file */
 
 .icon-btn {
     background: rgba(255, 255, 255, 0.1);
@@ -505,6 +509,9 @@ main {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    margin-bottom: 30px;
+    position: relative;
+    /* For absolute centering */
 }
 
 .dash-header h2 {
@@ -517,9 +524,27 @@ main {
     color: var(--primary);
 }
 
+.user-welcome {
+    position: absolute;
+    left: 50%;
+    top: 65%;
+    /* Moved down from 50% */
+    transform: translate(-50%, -50%);
+    text-align: center;
+    width: 100%;
+    pointer-events: none;
+    /* Let clicks pass through */
+}
+
+.user-welcome h2 {
+    font-size: 1.8rem;
+    margin: 0;
+    font-weight: 700;
+}
+
 .user-welcome p {
-    color: var(--text-secondary);
-    margin: 5px 0 0;
+    color: #888;
+    margin: 5px 0 0 0;
 }
 
 .stats-overview {
@@ -710,6 +735,8 @@ main {
     padding: 20px;
     overflow-y: auto;
     max-height: 100%;
+    pointer-events: auto;
+    /* Enable interaction */
 }
 
 .video-container {
@@ -872,6 +899,26 @@ main {
     }
 }
 
+.app-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+    font-family: 'Orbitron', 'Inter', sans-serif;
+    /* Tech font */
+    font-size: 2.2rem;
+    font-weight: 800;
+    letter-spacing: 4px;
+    background: linear-gradient(180deg, #fff 0%, #aaddff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow:
+        0 0 10px rgba(0, 200, 255, 0.5),
+        0 0 20px rgba(0, 200, 255, 0.3),
+        0 0 40px rgba(0, 200, 255, 0.1);
+    text-transform: uppercase;
+}
+
 /* Guide Card */
 .guide-card {
     border-left: 3px solid var(--primary);
@@ -879,17 +926,18 @@ main {
 }
 
 .guide-text {
-    font-size: 0.9rem;
-    line-height: 1.4;
-    color: #ddd;
+    font-size: 0.8rem;
+    /* Smaller text */
+    line-height: 1.3;
+    color: #e0e0e0;
     text-align: left;
-    max-height: 150px;
-    overflow-y: auto;
-    padding-right: 5px;
+    /* Removed max-height and overflow to show all text at once */
+    padding-right: 0;
 }
 
 .guide-step {
-    margin-bottom: 8px;
+    margin-bottom: 4px;
+    /* Reduced spacing */
     display: flex;
     gap: 8px;
 }

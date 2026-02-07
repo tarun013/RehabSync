@@ -75,16 +75,21 @@ export class PostureHeuristics {
 
         // Deep Squat check
         if (state === 'bottom') {
-            if (kneeAngle > 110) { // Not deep enough
+            // Updated to match FSM depth of 140. 
+            // Warn if angle is > 145 (barely bending).
+            if (kneeAngle > 145) {
                 feedback.isGood = false;
                 feedback.message = 'Go lower';
             }
         }
 
         // Back check (Torso lean)
-        if (hipAngle < 45) {
+        // calculateAngle2D(shoulder, hip, knee)
+        // 180 is straight. 90 is L shape. < 45 is excessive lean.
+        // Relaxing this to 30 to account for camera angles/noise.
+        if (hipAngle < 35) {
             feedback.isGood = false;
-            feedback.message = 'Keep your chest up';
+            feedback.message = 'Keep chest up';
         }
 
         return feedback;
@@ -106,9 +111,10 @@ export class PostureHeuristics {
 
         let feedback = { isGood: true, message: '' };
 
-        // If torso angle < 150, might be leaning back too much or sitting weirdly
+        // If torso angle < 140, might be leaning back too much or sitting weirdly
         // (Assuming standing press 180 is straight)
-        if (torsoAngle < 150) {
+        // Relaxed from 150 to 140 to reduce false positives
+        if (torsoAngle < 140) {
             feedback.isGood = false;
             feedback.message = 'Don\'t arch your back';
         }

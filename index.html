@@ -9,7 +9,9 @@
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@700;800&display=swap"
+        rel="stylesheet">
 
     <!-- MediaPipe Dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -61,29 +63,26 @@
     <div id="dashboard-view" class="view-section active">
         <div class="dashboard-container">
             <header class="dash-header">
+                <button id="delete-profile-btn" class="icon-btn danger-btn" title="Delete Profile"
+                    style="color: #ff4444;">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+
                 <div class="user-welcome">
-                    <h2>Good Morning, <span id="user-name">Guest</span>!</h2>
+                    <h2>Hello, <span id="user-name">Guest</span>!</h2>
                     <p>Ready to move?</p>
                 </div>
-                <div class="dash-actions">
-                    <button id="logout-btn" class="icon-btn" title="Logout">
-                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2"
-                            fill="none">
-                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                            <polyline points="16 17 21 12 16 7"></polyline>
-                            <line x1="21" y1="12" x2="9" y2="12"></line>
-                        </svg>
-                    </button>
-                    <button id="delete-profile-btn" class="icon-btn danger-btn" title="Delete Profile"
-                        style="color: #ff4444;">
-                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2"
-                            fill="none">
-                            <polyline points="3 6 5 6 21 6"></polyline>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
-                            </path>
-                        </svg>
-                    </button>
-                </div>
+
+                <button id="logout-btn" class="icon-btn" title="Logout">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                </button>
             </header>
 
             <div class="stats-overview glass-panel">
@@ -104,9 +103,12 @@
                 <div class="dash-card glass-panel">
                     <h3>Last Session</h3>
                     <div class="last-session-info">
-                        <span class="highlight">Squats</span>
-                        <span class="value">25 Reps</span>
-                        <span class="sub">Excellent Form (92%)</span>
+                        <span class="highlight" id="last-session-exercise">No Data</span>
+                        <div class="session-stats-row">
+                            <span class="value" id="last-session-reps">0 Reps</span>
+                            <span class="value" id="last-session-time">0:00</span>
+                        </div>
+                        <span class="sub" id="last-session-accuracy">--</span>
                     </div>
                 </div>
 
@@ -119,7 +121,6 @@
 
             <div class="dash-controls">
                 <button id="start-workout-btn" class="primary-btn large-btn">Start New Workout</button>
-                <button id="view-stats-btn" class="secondary-btn">View Full Stats</button>
             </div>
         </div>
     </div>
@@ -128,10 +129,9 @@
     <div id="app" style="display: none;">
         <!-- Overlay UI -->
         <div class="ui-layer">
-            <header class="glass-panel">
+            <header class="glass-panel workout-header">
                 <div class="header-left">
                     <button id="back-to-dash" class="icon-btn" title="Back to Dashboard">←</button>
-                    <h1>RehabSync</h1>
                     <select id="exercise-select" class="exercise-select">
                         <option value="squat">Squat</option>
                         <option value="bicep_curl">Bicep Curl</option>
@@ -140,10 +140,12 @@
                         <option value="push_up">Push Up</option>
                     </select>
                 </div>
+
+                <h1 class="app-title">RehabSync</h1>
+
                 <div class="status-indicator">
                     <span id="status-dot" class="dot"></span>
                     <span id="status-text">Initializing...</span>
-                    <span id="fps-counter" class="fps">0 FPS</span>
                 </div>
             </header>
 
@@ -221,6 +223,31 @@
                     </div>
                 </aside>
             </main>
+        </div>
+    </div>
+
+    <!-- Summary View -->
+    <div id="summary-view" class="view-section" style="display: none;">
+        <div class="summary-container glass-panel">
+            <h2 class="summary-title">Workout Complete!</h2>
+            <p class="summary-subtitle">Great job! Here is your performance.</p>
+
+            <div class="summary-stats">
+                <div class="stat-card">
+                    <span class="stat-value" id="summary-reps">0</span>
+                    <span class="stat-label">Total Reps</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="summary-time">00:00</span>
+                    <span class="stat-label">Duration</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value" id="summary-accuracy">0%</span>
+                    <span class="stat-label">Accuracy</span>
+                </div>
+            </div>
+
+            <button id="summary-home-btn" class="primary-btn pulse-btn">Back to Dashboard</button>
         </div>
     </div>
 
