@@ -20,6 +20,7 @@ export const ProfileService = {
             id: 'p_' + Date.now(),
             name: name,
             color: color,
+            dailyGoal: 3, // Default goal (exercises)
             joined: new Date().toISOString()
         };
         profiles.push(newProfile);
@@ -31,6 +32,17 @@ export const ProfileService = {
     getProfile: (id) => {
         const profiles = ProfileService.getProfiles();
         return profiles.find(p => p.id === id);
+    },
+
+    updateGoal: (profileId, newGoal) => {
+        const profiles = ProfileService.getProfiles();
+        const profile = profiles.find(p => p.id === profileId);
+        if (profile) {
+            profile.dailyGoal = parseInt(newGoal);
+            localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(profiles));
+            return true;
+        }
+        return false;
     },
 
     // Save a completed workout session
@@ -65,10 +77,15 @@ export const ProfileService = {
             exercises.add(s.exercise);
         });
 
+        // Get profile to find goal
+        const profile = ProfileService.getProfile(profileId);
+        const goal = profile ? (profile.dailyGoal || 50) : 50;
+
         return {
             reps: totalReps,
             uniqueExercises: exercises.size,
-            sessionCount: todaySessions.length
+            sessionCount: todaySessions.length,
+            goal: goal
         };
     },
 

@@ -12,6 +12,7 @@ import { LandmarkSmoother } from './smoothing.js';
 import { DbService } from './db.js';
 import { ProfileService } from './profile_service.js';
 import { AdaptiveThresholdService } from './adaptive_thresholds.js';
+import { PersonalizationEngine } from './personalization.js';
 import { exerciseGuides } from './exercise_guides.js';
 // import { VisualGuide } from './visual_guide.js'; // Removed
 
@@ -44,6 +45,13 @@ const saveProfileBtn = document.getElementById('save-profile-btn');
 const cancelProfileBtn = document.getElementById('cancel-profile-btn');
 const colorOptions = document.querySelectorAll('.color-option');
 
+// Goal Modal
+const editGoalModal = document.getElementById('edit-goal-modal');
+const newDailyGoalInput = document.getElementById('new-daily-goal');
+const saveGoalBtn = document.getElementById('save-goal-btn');
+const cancelGoalBtn = document.getElementById('cancel-goal-btn');
+const editGoalBtn = document.getElementById('edit-goal-btn');
+
 const startWorkoutBtn = document.getElementById('start-workout-btn');
 const backToDashBtn = document.getElementById('back-to-dash');
 const userNameDisplay = document.getElementById('user-name');
@@ -58,6 +66,7 @@ let chart;
 let smoother;
 // let visualGuide; 
 let adaptiveService;
+let personalizationEngine;
 
 // Summary Elements
 const summaryView = document.getElementById('summary-view');
@@ -75,7 +84,7 @@ let frameCount = 0;
 let lastFpsTime = Date.now();
 
 let isProcessing = false;
-let currentExercise = 'squat';
+let currentExercise = 'bicep_curl';
 
 // Session State
 let targetReps = 10;
@@ -215,9 +224,25 @@ function handleSaveProfile() {
 
 function loadDashboardStats(profileId) {
     const stats = ProfileService.getTodayStats(profileId);
-    const progressRing = document.querySelector('.progress-ring-mini');
-    if (progressRing) {
-        progressRing.innerText = `${stats.uniqueExercises}/3`;
+
+    const progressText = document.getElementById('goal-progress-text');
+    const progressBar = document.getElementById('goal-progress-bar');
+
+    if (progressText && progressBar) {
+        // Goal Logic (Exercise Count)
+        const goal = stats.goal || 3;
+        const current = stats.uniqueExercises;
+        const percent = Math.min(100, Math.round((current / goal) * 100));
+
+        progressText.innerText = `${current} / ${goal} Exercises`;
+        progressBar.style.width = `${percent}%`;
+
+        if (percent >= 100) {
+            progressText.innerText += " (Completed!)";
+            progressBar.style.background = "#00ff88"; // Solid green
+        } else {
+            progressBar.style.background = "linear-gradient(90deg, #00ff88, #00ccff)";
+        }
     }
 
     // Update streak
@@ -327,6 +352,35 @@ colorOptions.forEach(opt => {
     opt.addEventListener('click', (e) => selectColor(e.target));
 });
 
+// Goal Editing Listeners
+if (editGoalBtn) {
+    editGoalBtn.addEventListener('click', () => {
+        editGoalModal.style.display = 'flex';
+        // Pre-fill current goal
+        const stats = ProfileService.getTodayStats(currentUser.id);
+        newDailyGoalInput.value = stats.goal || 50;
+    });
+}
+
+if (cancelGoalBtn) {
+    cancelGoalBtn.addEventListener('click', () => {
+        editGoalModal.style.display = 'none';
+    });
+}
+
+if (saveGoalBtn) {
+    saveGoalBtn.addEventListener('click', () => {
+        const newGoal = parseInt(newDailyGoalInput.value);
+        if (newGoal && newGoal > 0) {
+            ProfileService.updateGoal(currentUser.id, newGoal);
+            editGoalModal.style.display = 'none';
+            loadDashboardStats(currentUser.id);
+        } else {
+            alert("Please enter a valid goal.");
+        }
+    });
+}
+
 // ---------------------------
 
 async function initializeServices() {
@@ -350,8 +404,15 @@ async function initializeServices() {
     try {
         renderer = new Renderer(canvasElement, videoElement);
         audio = new AudioFeedback();
-        fsm = new ExerciseFSM(adaptiveService);
+
+        // Init Personalization (needs currentUser.id if available, otherwise guest)
+        const pid = currentUser ? currentUser.id : 'guest';
+        personalizationEngine = new PersonalizationEngine(pid);
+
+        fsm = new ExerciseFSM(adaptiveService, personalizationEngine);
         heuristics = new PostureHeuristics();
+        heuristics.setPersonalizationEngine(personalizationEngine);
+
         smoother = new LandmarkSmoother(0.5);
 
         // Initialize Chart
@@ -441,6 +502,7 @@ function updateGuideText(exercise) {
 
 function resetSession() {
     fsm.reset();
+    if (personalizationEngine) personalizationEngine.reset();
     smoother.reset();
     resetChart(chart);
     lastRepCount = 0;
@@ -493,7 +555,23 @@ function onResults(results) {
 
         // Update UI
         const angleText = fsmState.currentAngle ? ` | ${Math.round(fsmState.currentAngle)}°` : '';
-        stateDisplay.innerText = fsmState.state.toUpperCase() + angleText;
+
+        // --- CALIBRATION UI ---
+        const badge = document.getElementById('learning-badge');
+        if (personalizationEngine && currentExercise === 'squat') {
+            if (personalizationEngine.isCalibrating()) {
+                const p = personalizationEngine.getProgress();
+                stateDisplay.innerText = `CALIBRATING (${p.reps}/${p.target})` + angleText;
+                if (badge) badge.style.display = 'inline-flex';
+            } else {
+                stateDisplay.innerText = fsmState.state.toUpperCase() + angleText;
+                if (badge) badge.style.display = 'none';
+            }
+        } else {
+            stateDisplay.innerText = fsmState.state.toUpperCase() + angleText;
+            if (badge) badge.style.display = 'none';
+        }
+
         repDisplay.innerText = fsmState.reps;
 
         // --- VISUALIZE ON-DEVICE LEARNING ---
@@ -559,7 +637,11 @@ function onResults(results) {
             }
 
             // Update Chart
-            updateChart(chart, `Rep ${fsmState.reps}`, score);
+            let targetLine = null;
+            if (currentExercise === 'squat' && personalizationEngine) {
+                targetLine = personalizationEngine.getThreshold();
+            }
+            updateChart(chart, `Rep ${fsmState.reps}`, score, targetLine);
 
             // Save to Local Profile
             if (currentUser) {

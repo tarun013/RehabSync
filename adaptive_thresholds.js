@@ -39,6 +39,17 @@ export class AdaptiveThresholdService {
         return this.getDefaults()[exercise][param];
     }
 
+    getSafetyBounds(exercise) {
+        const bounds = {
+            squat: { depth: { min: 70, max: 130 } },
+            bicep_curl: { flex: { min: 30, max: 70 } },
+            shoulder_press: { overhead: { min: 140, max: 175 } },
+            push_up: { arm_flex: { min: 70, max: 100 } },
+            neck_stretch: { tilt: { min: 15, max: 45 } }
+        };
+        return bounds[exercise] || {};
+    }
+
     /**
      * Feed back observed metrics to adapt thresholds.
      * @param {string} exercise 
@@ -51,21 +62,48 @@ export class AdaptiveThresholdService {
 
         const hist = this.history[exercise][param];
         hist.push(value);
-        if (hist.length > 5) hist.shift(); // Keep last 5
+        if (hist.length > 5) hist.shift();
 
-        // Adaptation Logic:
-        // If user consistently (avg of last 5) hits a different range, nudge the threshold.
+        // Need at least 3 reps to adapt
+        if (hist.length < 3) return this.thresholds[exercise][param];
+
         const avg = hist.reduce((a, b) => a + b, 0) / hist.length;
+        let current = this.thresholds[exercise][param] || this.getDefaults()[exercise][param];
 
-        const current = this.thresholds[exercise][param];
+        // Determine Direction
+        // specific per exercise: For Squat/Pushup/Curl, LOWER is harder. For Press, HIGHER is harder.
+        // Let's assume generic "Difficulty" maps to "Lower Angle" for most flex-based moves.
+        // Squat (depth): Lower is harder.
+        // Curl (flex): Lower is harder.
+        // Pushup (arm_flex): Lower is harder.
+        // Press (overhead): Higher is harder.
 
-        // Bounds (Safety)
-        // Squat Depth: Default 100. If user avg is 110 (stiff), adapt up to 120 max.
-        // If user avg is 80 (flexible), adapt down to 90.
+        const isLowerHarder = ['squat', 'bicep_curl', 'push_up'].includes(exercise);
 
-        let target = current;
-        // Simple Lerp towards average
-        target = current + (avg - current) * 0.1;
+        // Check improvement
+        let isImproving = false;
+        if (isLowerHarder) {
+            isImproving = avg < current;
+        } else {
+            isImproving = avg > current;
+        }
+
+        // Asymmetric Adaptation Rate
+        // If improving, adapt fast (0.2). If regressing, adapt slow/lazy (0.05).
+        const rate = isImproving ? 0.2 : 0.05;
+
+        // Prevent lazy drift: If regressing, only adapt if significantly off (e.g. > 5 degrees)
+        if (!isImproving && Math.abs(avg - current) < 5) {
+            return current; // Ignore minor laziness
+        }
+
+        let target = current + (avg - current) * rate;
+
+        // CLAMPING
+        const bounds = this.getSafetyBounds(exercise)[param];
+        if (bounds) {
+            target = Math.max(bounds.min, Math.min(bounds.max, target));
+        }
 
         // Update
         this.thresholds[exercise][param] = Math.round(target);

@@ -12,6 +12,14 @@ export function initChart(ctx) {
                 tension: 0.4,
                 pointRadius: 4,
                 fill: true
+            }, {
+                label: 'Target Depth',
+                data: [],
+                borderColor: '#FF0088', // Magenta for target
+                borderWidth: 2,
+                borderDash: [5, 5],
+                pointRadius: 0,
+                fill: false
             }]
         },
         options: {
@@ -46,14 +54,20 @@ export function initChart(ctx) {
     });
 }
 
-export function updateChart(chart, label, dataPoint) {
+export function updateChart(chart, label, dataPoint, targetLineValue = null) {
     chart.data.labels.push(label);
     chart.data.datasets[0].data.push(dataPoint);
+
+    if (targetLineValue !== null) {
+        chart.data.datasets[1].data.push(targetLineValue);
+    }
+
     chart.update();
 }
 
 export function resetChart(chart) {
     chart.data.labels = [];
     chart.data.datasets[0].data = [];
+    chart.data.datasets[1].data = [];
     chart.update();
 }

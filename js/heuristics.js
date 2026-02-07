@@ -6,6 +6,11 @@ import { calculateAngle, calculateAngle2D } from './geometry.js';
 export class PostureHeuristics {
     constructor() {
         this.lastFeedback = null;
+        this.engine = null;
+    }
+
+    setPersonalizationEngine(engine) {
+        this.engine = engine;
     }
 
     analyze(landmarks, state, exercise = 'squat') {
@@ -75,9 +80,18 @@ export class PostureHeuristics {
 
         // Deep Squat check
         if (state === 'bottom') {
-            if (kneeAngle > 110) { // Not deep enough
-                feedback.isGood = false;
-                feedback.message = 'Go lower';
+            // Check Calibration State
+            const isCalibrating = this.engine && this.engine.isCalibrating();
+            const threshold = this.engine ? this.engine.getThreshold() : 100; // Default 100 if no engine
+
+            if (!isCalibrating) {
+                if (kneeAngle > threshold) { // Not deep enough
+                    feedback.isGood = false;
+                    feedback.message = 'Go lower';
+                }
+            } else {
+                // In calibration, we don't critique depth.
+                // We just let them do their thing.
             }
         }
 

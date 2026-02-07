@@ -4,7 +4,7 @@
 import { calculateAngle2D } from './geometry.js';
 
 export class ExerciseFSM {
-    constructor(thresholdService) {
+    constructor(thresholdService, personalizationEngine) {
         this.currentExercise = 'squat'; // 'squat' or 'bicep_curl'
         this.state = 'neutral';
         this.reps = 0;
@@ -15,6 +15,9 @@ export class ExerciseFSM {
         this.lastRepTime = 0; // For debounce
 
         this.thresholdService = thresholdService;
+        this.personalizationEngine = personalizationEngine;
+
+        // Fallback if service not ready
 
         // Fallback if service not ready
         this.defaultThresholds = {
@@ -91,23 +94,39 @@ export class ExerciseFSM {
         const angle = calculateAngle2D(hip, knee, ankle);
 
         const standThres = this.getT('squat', 'stand');
-        const depthThres = this.getT('squat', 'depth');
+        // Use Personalized Threshold if active
+        let depthThres = this.getT('squat', 'depth');
+        if (this.personalizationEngine && !this.personalizationEngine.isCalibrating()) {
+            // If active, use stricter personalized threshold
+            depthThres = this.personalizationEngine.getThreshold();
+        } else {
+            // If calibrating, maybe be lenient or use default?
+            // Prompt says: "Do not trigger 'Bad Form' alerts for depth." - handled in Heuristics.
+            // But FSM needs to know when "bottom" is reached to count the rep.
+            // We should probably use a loose threshold for detection during calibration.
+            depthThres = 110; // Slightly easier to trigger 'bottom' state so we can record valid depth.
+        }
 
         // Stand Check: Hip should be above Knee
         const isStanding = hip.y < knee.y;
 
         switch (this.state) {
             case 'neutral':
+                // Strict Start: Must be fully standing to begin
                 if (angle < standThres - 10 && isStanding) {
                     this.state = 'descending';
                     this.isValid = true; // New rep starts valid
                 }
                 break;
             case 'descending':
-                if (angle < depthThres) {
+                // Lenient Depth: Trigger 'bottom' slightly earlier (e.g. 105 vs 100)
+                if (angle < depthThres + 5) {
                     this.state = 'bottom';
                     // ADAPTATION: Record max depth achieved
                     if (this.thresholdService) this.thresholdService.observe('squat', 'depth', angle);
+
+                    // PERSONALIZATION: Record depth explicitly
+                    // We want the MINIMUM angle.
                 }
                 else if (angle > standThres) {
                     this.state = 'neutral'; // Aborted
@@ -115,22 +134,41 @@ export class ExerciseFSM {
                 }
                 break;
             case 'bottom':
-                // Track lowest point for adaptation? 
-                if (angle < depthThres && this.thresholdService) {
+                // Track lowest point for adaptation - Allow learning even if slightly high
+                if (angle < depthThres + 10 && this.thresholdService) {
                     this.thresholdService.observe('squat', 'depth', angle);
                 }
 
-                if (angle > depthThres + 10) this.state = 'ascending';
+                // Track min angle for current rep
+                if (this.minSquatAngle === undefined || angle < this.minSquatAngle) {
+                    this.minSquatAngle = angle;
+                }
+
+                // Hysteresis: Must rise significantly to leave bottom
+                if (angle > depthThres + 10) {
+                    this.state = 'ascending';
+                    // Rep is transitioning up. Now we can log the min angle if we were calibrating.
+                    if (this.personalizationEngine && this.personalizationEngine.isCalibrating()) {
+                        this.personalizationEngine.addCalibrationData(this.minSquatAngle || angle);
+                    }
+                    this.minSquatAngle = 180; // Reset
+                }
                 break;
             case 'ascending':
-                if (angle > standThres) {
+                // Lockout Trap Fix: Use lenient finish threshold (Hysteresis)
+                // Start strict (170), Finish lenient (155)
+                if (angle > standThres - 15) {
                     this.state = 'neutral';
                     if (this.isValid) {
                         this.reps++;
                     } else {
                         // Rep validation failed previously, do not count
                     }
-                } else if (angle < depthThres) this.state = 'bottom';
+                }
+                // Double Dip Protection: If they drop back down, return to bottom
+                else if (angle < depthThres + 5) {
+                    this.state = 'bottom';
+                }
                 break;
         }
 
@@ -307,6 +345,15 @@ export class ExerciseFSM {
 
         const thres = this.getThresholds('neck');
 
+        // Latch Logic: If completed, wait for return to neutral
+        if (this.state === 'completed') {
+            if (absAngle < 10) {
+                this.state = 'neutral';
+                this.holdStartTime = 0;
+            }
+            return { state: 'Completed', reps: this.reps, isValid: true, currentAngle: absAngle };
+        }
+
         if (absAngle > thres.tilt) {
             if (this.state !== 'holding') {
                 this.state = 'holding';
@@ -363,7 +410,8 @@ export class ExerciseFSM {
             case 'descending': // Going down
                 if (!handsOnFloor) this.isValid = false;
 
-                if (armAngle < thres.arm_flex) this.state = 'bottom';
+                // Depth Fix: Relaxed bottom detection (110 deg)
+                if (armAngle < 110) this.state = 'bottom';
                 else if (armAngle > thres.arm_ext) this.state = 'neutral';
                 break;
             case 'bottom': // At bottom
@@ -371,7 +419,8 @@ export class ExerciseFSM {
                 if (armAngle > thres.arm_flex + 10) this.state = 'ascending';
                 break;
             case 'ascending': // Coming up
-                if (armAngle > thres.arm_ext) {
+                // Lockout Trap Fix: Lenient finish
+                if (armAngle > thres.arm_ext - 15) {
                     this.state = 'neutral';
                     // Debounce: Prevent double counting if noise triggers multiple transitions quickly
                     const now = Date.now();
@@ -379,7 +428,7 @@ export class ExerciseFSM {
                         this.reps++;
                         this.lastRepTime = now;
                     }
-                } else if (armAngle < thres.arm_flex) this.state = 'bottom';
+                } else if (armAngle < 110) this.state = 'bottom'; // consistent with descending
                 break;
         }
 
@@ -392,5 +441,6 @@ export class ExerciseFSM {
         this.isValid = true;
         this.lastRepTime = 0;
         this.holdStartTime = 0;
+        this.minSquatAngle = 180;
     }
 }
