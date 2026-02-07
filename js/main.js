@@ -720,9 +720,6 @@ async function startApp() {
     // Initialize DB
     await db.init();
 
-    // Load persisted session data
-    updateLastSessionUI();
-
     // Load Profiles
     const profiles = await ProfileService.getAllProfiles();
     renderProfileList(); // Renders profiles to UI

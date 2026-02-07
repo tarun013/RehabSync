@@ -18,10 +18,10 @@ export class ExerciseFSM {
 
         // Fallback if service not ready
         this.defaultThresholds = {
-            squat: { stand: 165, depth: 130 }, // Relaxed stand (was 170), Relaxed depth (was 100) - 130 is much easier
-            bicep_curl: { extend: 165, flex: 50 },
-            shoulder_press: { start: 50, overhead: 150 },
-            neck: { tilt: 15, duration: 5000 },
+            squat: { stand: 170, depth: 100 }, // Relaxed stand (was 160)
+            bicep_curl: { extend: 165, flex: 50 }, // Relaxed extend (was 160)
+            shoulder_press: { start: 50, overhead: 150 }, // Relaxed start
+            neck: { tilt: 15, duration: 5000 }, // More sensitive tilt
             pushup: { arm_ext: 165, arm_flex: 90 }
         };
     }
@@ -141,40 +141,81 @@ export class ExerciseFSM {
     }
 
     updateCurl(landmarks) {
-        const side = this.getBestSide(landmarks);
-        const isLeft = side === 'left';
+        // Track BOTH arms
+        const leftShoulder = landmarks[11];
+        const leftElbow = landmarks[13];
+        const leftWrist = landmarks[15];
 
-        const shoulder = isLeft ? landmarks[11] : landmarks[12];
-        const elbow = isLeft ? landmarks[13] : landmarks[14];
-        const wrist = isLeft ? landmarks[15] : landmarks[16];
+        const rightShoulder = landmarks[12];
+        const rightElbow = landmarks[14];
+        const rightWrist = landmarks[16];
 
-        if (!shoulder || !elbow || !wrist) return { state: this.state, reps: this.reps, isValid: this.isValid };
-
-        const angle = calculateAngle2D(shoulder, elbow, wrist);
-
-        // Simpler Thresholds
-        const EXTENDED_THRESHOLD = 150; // Arm down
-        const FLEXED_THRESHOLD = 60;   // Arm up
-
-        // State Machine
-        if (this.state === 'neutral' || this.state === 'extending') { // 'down' state
-            if (angle < FLEXED_THRESHOLD) {
-                this.state = 'flexing'; // reached top
-            }
-        } else if (this.state === 'flexing') { // 'up' state
-            if (angle > EXTENDED_THRESHOLD) {
-                this.state = 'neutral'; // reached bottom
-                this.reps++;
-            }
-        } else {
-            // Fallback
-            this.state = 'neutral';
+        if (!leftShoulder || !leftElbow || !leftWrist || !rightShoulder || !rightElbow || !rightWrist) {
+            return { state: this.state, reps: this.reps, isValid: this.isValid };
         }
 
-        // Always valid in this simple mode
-        this.isValid = true;
+        const leftAngle = calculateAngle2D(leftShoulder, leftElbow, leftWrist);
+        const rightAngle = calculateAngle2D(rightShoulder, rightElbow, rightWrist);
 
-        return { state: this.state, reps: this.reps, currentAngle: angle, isValid: this.isValid };
+        // Use average angle for simplicity in state tracking, but check both for thresholds
+        const avgAngle = (leftAngle + rightAngle) / 2;
+        const thres = this.getThresholds('bicep_curl');
+
+        // Check synchronization (arms should be roughly similar)
+        if (Math.abs(leftAngle - rightAngle) > 30) {
+            // this.isValid = false; // Optional: Enforce symmetry
+            // For now, we just require both to hit the target, regardless of symmetry
+        }
+
+        switch (this.state) {
+            case 'neutral':
+                // Both arms must be extended to start
+                if (leftAngle > thres.extend - 15 && rightAngle > thres.extend - 15) {
+                    // Ready
+                }
+
+                // Transition: Both arms start curling
+                if (leftAngle < thres.extend - 15 && rightAngle < thres.extend - 15) {
+                    this.state = 'flexing';
+                    this.isValid = true;
+                }
+                break;
+
+            case 'flexing':
+                // Check if BOTH arms reach the peak
+                if (leftAngle < thres.flex && rightAngle < thres.flex) {
+                    this.state = 'peak';
+                }
+                // Abort if both go back down without reaching peak
+                else if (leftAngle > thres.extend && rightAngle > thres.extend) {
+                    this.state = 'neutral';
+                    this.isValid = true;
+                }
+                break;
+
+            case 'peak':
+                // Wait for extension to start
+                if (leftAngle > thres.flex + 10 && rightAngle > thres.flex + 10) {
+                    this.state = 'extending';
+                }
+                break;
+
+            case 'extending':
+                // Complete rep when BOTH arms are fully extended
+                if (leftAngle > thres.extend && rightAngle > thres.extend) {
+                    this.state = 'neutral';
+                    if (this.isValid) {
+                        this.reps++;
+                    }
+                }
+                // If they go back up, return to peak
+                else if (leftAngle < thres.flex && rightAngle < thres.flex) {
+                    this.state = 'peak';
+                }
+                break;
+        }
+
+        return { state: this.state, reps: this.reps, currentAngle: avgAngle, isValid: this.isValid };
     }
 
     updatePress(landmarks) {
