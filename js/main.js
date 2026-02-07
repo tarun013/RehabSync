@@ -1,0 +1,617 @@
+/**
+ * Main application entry point.
+ */
+import { Camera } from './camera.js';
+import { PoseService } from './pose_service.js';
+import { Renderer } from './renderer.js';
+import { ExerciseFSM } from './exercise_fsm.js';
+import { PostureHeuristics } from './heuristics.js';
+import { AudioFeedback } from './audio.js';
+import { initChart, updateChart, resetChart } from './chart_utils.js';
+import { LandmarkSmoother } from './smoothing.js';
+import { DbService } from './db.js';
+import { ProfileService } from './profile_service.js';
+import { AdaptiveThresholdService } from './adaptive_thresholds.js';
+import { exerciseGuides } from './exercise_guides.js';
+// import { VisualGuide } from './visual_guide.js'; // Removed
+
+const videoElement = document.getElementById('input_video');
+const canvasElement = document.getElementById('output_canvas');
+const fpsDisplay = document.getElementById('fps-counter');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const stateDisplay = document.getElementById('current-state');
+const repDisplay = document.getElementById('rep-count');
+const feedbackDisplay = document.getElementById('feedback-text');
+const overlayFeedback = document.getElementById('feedback-overlay');
+const exerciseSelect = document.getElementById('exercise-select');
+
+// New UI Elements
+const targetRepsInput = document.getElementById('target-reps');
+const resetBtn = document.getElementById('reset-btn');
+const chartCanvas = document.getElementById('posture-chart');
+// const guideCanvas = document.getElementById('guide-canvas'); // Removed
+
+// UI Elements
+const profileView = document.getElementById('profile-view');
+const dashboardView = document.getElementById('dashboard-view');
+const appView = document.getElementById('app');
+
+const profileList = document.getElementById('profile-list');
+const createProfileModal = document.getElementById('create-profile-modal');
+const newProfileNameInput = document.getElementById('new-profile-name');
+const saveProfileBtn = document.getElementById('save-profile-btn');
+const cancelProfileBtn = document.getElementById('cancel-profile-btn');
+const colorOptions = document.querySelectorAll('.color-option');
+
+const startWorkoutBtn = document.getElementById('start-workout-btn');
+const backToDashBtn = document.getElementById('back-to-dash');
+const userNameDisplay = document.getElementById('user-name');
+
+let camera;
+let poseService;
+let renderer;
+let fsm;
+let heuristics;
+let audio;
+let chart;
+let smoother;
+// let visualGuide; 
+let adaptiveService;
+
+let frameCount = 0;
+let lastFpsTime = Date.now();
+
+let isProcessing = false;
+let currentExercise = 'squat';
+
+// Session State
+let targetReps = 10;
+let activeFrames = 0;
+let goodFrames = 0;
+let lastRepCount = 0;
+let isSetComplete = false;
+let wasLastFrameGood = true;
+
+let isInitialized = false;
+let currentUser = null;
+let selectedColor = '#00ff88';
+
+// --- PROFILE & NAV LOGIC ---
+
+function switchView(viewId) {
+    [profileView, dashboardView, appView].forEach(view => {
+        view.style.display = 'none';
+        view.classList.remove('active');
+    });
+
+    const target = document.getElementById(viewId);
+
+    // Stop Camera if leaving app view
+    if (viewId !== 'app' && camera && camera.isActive) {
+        console.log("Stopping camera...");
+        camera.stop();
+        statusText.innerText = 'Stopped';
+        statusDot.classList.remove('active');
+        statusDot.style.backgroundColor = '#555';
+    }
+
+    target.style.display = 'flex';
+    if (viewId === 'dashboard-view') {
+        target.style.display = 'block';
+    }
+
+    setTimeout(() => {
+        target.classList.add('active');
+    }, 10);
+}
+
+function initProfileView() {
+    const profiles = ProfileService.getProfiles();
+    profileList.innerHTML = ''; // Clear list
+
+    // Render Profiles
+    profiles.forEach(profile => {
+        const div = document.createElement('div');
+        div.className = 'profile-item';
+        div.onclick = () => selectProfile(profile.id);
+        div.innerHTML = `
+            <div class="avatar" style="background-color: ${profile.color}">${profile.name[0].toUpperCase()}</div>
+            <span class="profile-name">${profile.name}</span>
+        `;
+        profileList.appendChild(div);
+    });
+
+    // Add "Add Profile" Button
+    const addBtn = document.createElement('div');
+    addBtn.className = 'profile-item add-profile-btn';
+    addBtn.onclick = showCreateProfileModal;
+    addBtn.innerHTML = `
+        <div class="avatar add-avatar">+</div>
+        <span class="profile-name">Add Profile</span>
+    `;
+    profileList.appendChild(addBtn);
+
+    switchView('profile-view');
+}
+
+function selectProfile(profileId) {
+    try {
+        console.log("Selecting profile:", profileId);
+        const profile = ProfileService.getProfile(profileId);
+        if (profile) {
+            currentUser = profile;
+            userNameDisplay.innerText = profile.name;
+
+            // Init Adaptive Service for this user
+            adaptiveService = new AdaptiveThresholdService(profile.id);
+
+            console.log("Loading stats...");
+            loadDashboardStats(profile.id);
+
+            console.log("Switching view...");
+            switchView('dashboard-view');
+        } else {
+            console.error("Profile not found:", profileId);
+            alert("Error: Profile not found.");
+        }
+    } catch (e) {
+        console.error("Error selecting profile:", e);
+        alert("Error selecting profile: " + e.message);
+    }
+}
+
+function showCreateProfileModal() {
+    createProfileModal.style.display = 'flex';
+    newProfileNameInput.value = '';
+
+    // Reset color selection
+    colorOptions.forEach(opt => opt.classList.remove('selected'));
+    const firstColor = document.querySelector('.color-option');
+    if (firstColor) {
+        selectColor(firstColor);
+    }
+}
+
+function selectColor(element) {
+    colorOptions.forEach(opt => opt.classList.remove('selected'));
+    element.classList.add('selected');
+    selectedColor = element.getAttribute('data-color');
+}
+
+function handleSaveProfile() {
+    try {
+        const name = newProfileNameInput.value.trim();
+        console.log("Saving profile:", name, selectedColor);
+
+        if (!name) {
+            alert("Please enter a name.");
+            return;
+        }
+
+        const profile = ProfileService.createProfile(name, selectedColor);
+        console.log("Profile created:", profile);
+
+        createProfileModal.style.display = 'none';
+        initProfileView();
+
+    } catch (e) {
+        console.error("Error creating profile:", e);
+        alert("Failed to create profile: " + e.message);
+    }
+}
+
+function loadDashboardStats(profileId) {
+    const stats = ProfileService.getTodayStats(profileId);
+    const progressRing = document.querySelector('.progress-ring-mini');
+    if (progressRing) {
+        progressRing.innerText = `${stats.uniqueExercises}/3`;
+    }
+
+    // Update streak
+    const streakCount = document.getElementById('streak-count');
+    if (streakCount) {
+        const streak = ProfileService.getStreak(profileId);
+        streakCount.innerText = `${streak.count} Day Streak ${streak.count > 0 ? '🔥' : ''}`;
+    }
+
+    updateCalendar();
+}
+
+function updateCalendar() {
+    const streakBar = document.querySelector('.streak-bar');
+    if (!streakBar) return;
+
+    streakBar.innerHTML = '';
+    const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const today = new Date();
+    const currentDayIndex = today.getDay(); // 0-6 (Sun-Sat)
+
+    // Show last 7 days ending with Today? Or just a static week view?
+    // Let's show a rolling 7 days ending today for "Streak" context
+
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(today.getDate() - i);
+        const dayName = days[d.getDay()];
+
+        const dayDiv = document.createElement('div');
+        dayDiv.className = 'day';
+        dayDiv.innerText = dayName;
+
+        // Highlight today
+        if (i === 0) {
+            dayDiv.classList.add('active');
+            dayDiv.style.border = '2px solid white'; // Extra highlight for today
+        }
+
+        // Mock "active" streak for previous days (randomly for demo, or based on real data)
+        // In real app, check ProfileService.hasWorkoutOnDate(d)
+        if (i > 0 && Math.random() > 0.5) {
+            // dayDiv.classList.add('active'); // Uncomment to show fake streak history
+        }
+
+        streakBar.appendChild(dayDiv);
+    }
+}
+
+// Initial Load with Auto-Login
+// Initial Load - Show Profile Selection
+initProfileView();
+
+// Nav & Auth
+const logoutBtn = document.getElementById('logout-btn');
+const deleteProfileBtn = document.getElementById('delete-profile-btn');
+
+if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+        currentUser = null;
+        switchView('profile-view');
+    });
+}
+
+if (deleteProfileBtn) {
+    deleteProfileBtn.addEventListener('click', () => {
+        if (!currentUser) return;
+
+        const confirmed = confirm(`Are you sure you want to delete profile "${currentUser.name}"? This cannot be undone.`);
+        if (confirmed) {
+            ProfileService.deleteProfile(currentUser.id);
+            currentUser = null;
+            initProfileView(); // Refresh list and show view
+        }
+    });
+
+}
+
+
+// Event Listeners
+startWorkoutBtn.addEventListener('click', async () => {
+    switchView('app');
+    if (!isInitialized) {
+        await initializeServices();
+        isInitialized = true;
+    }
+    await startCameraSequence();
+});
+
+backToDashBtn.addEventListener('click', () => {
+    switchView('dashboard-view');
+    // Consider pausing camera here
+});
+
+
+saveProfileBtn.addEventListener('click', handleSaveProfile);
+cancelProfileBtn.addEventListener('click', () => createProfileModal.style.display = 'none');
+
+colorOptions.forEach(opt => {
+    opt.addEventListener('click', (e) => selectColor(e.target));
+});
+
+// ---------------------------
+
+async function initializeServices() {
+    statusText.innerText = 'Loading models...';
+
+    // Event Listener for Exercise Selection
+    exerciseSelect.addEventListener('change', (e) => {
+        currentExercise = e.target.value;
+        setExerecise(currentExercise);
+    });
+
+    // Event Listeners for Set Controls
+    targetRepsInput.addEventListener('change', (e) => {
+        targetReps = parseInt(e.target.value) || 10;
+    });
+
+    resetBtn.addEventListener('click', () => {
+        resetSession();
+    });
+
+    try {
+        renderer = new Renderer(canvasElement, videoElement);
+        audio = new AudioFeedback();
+        fsm = new ExerciseFSM(adaptiveService);
+        heuristics = new PostureHeuristics();
+        smoother = new LandmarkSmoother(0.5);
+
+        // Initialize Chart
+        chart = initChart(chartCanvas.getContext('2d'));
+
+        poseService = new PoseService();
+        poseService.onResults(onResults);
+
+        camera = new Camera(videoElement, {
+            onFrame: async () => {
+                renderer.drawVideo(videoElement);
+
+                if (!isProcessing) {
+                    isProcessing = true;
+                    await poseService.send(videoElement);
+                    isProcessing = false;
+                    updateFPS();
+                }
+            },
+            width: 1280,
+            height: 720
+        });
+
+        // Set size immediately if possible
+        renderer.setSize(videoElement.videoWidth || 1280, videoElement.videoHeight || 720);
+
+        // Unlock audio context
+        document.body.addEventListener('click', () => {
+            if (audio) audio.resume();
+        }, { once: true });
+
+        console.log("Services initialized");
+
+    } catch (error) {
+        console.error(error);
+        alert("Error initializing services: " + error.message);
+    }
+}
+
+async function startCameraSequence() {
+    if (!camera) return;
+    try {
+        statusText.innerText = 'Starting camera...';
+        await camera.start();
+        renderer.setSize(videoElement.videoWidth, videoElement.videoHeight);
+        statusText.innerText = 'Active';
+        statusDot.classList.add('active');
+        statusDot.style.backgroundColor = '#00ff88';
+    } catch (e) {
+        console.error("Camera Start Error", e);
+        statusText.innerText = 'Error';
+        statusDot.style.backgroundColor = '#ff4444';
+    }
+}
+
+function setExerecise(exercise) {
+    fsm.setExercise(exercise);
+    resetSession();
+
+    // Reset UI text
+    stateDisplay.innerText = 'NEUTRAL';
+    feedbackDisplay.innerText = `Switched to ${exercise.replace('_', ' ').toUpperCase()}`;
+    feedbackDisplay.style.color = '#ffffff';
+
+    updateGuideText(exercise);
+}
+
+function updateGuideText(exercise) {
+    const guideContainer = document.getElementById('exercise-guide-text');
+    if (!guideContainer) return;
+
+    const steps = exerciseGuides[exercise] || ["Follow standard form."];
+
+    guideContainer.innerHTML = steps.map((step, index) => `
+        <div class="guide-step">
+            <span class="step-number">${index + 1}.</span>
+            <span>${step}</span>
+        </div>
+    `).join('');
+}
+
+
+function resetSession() {
+    fsm.reset();
+    smoother.reset();
+    resetChart(chart);
+    lastRepCount = 0;
+    activeFrames = 0;
+    goodFrames = 0;
+    isSetComplete = false;
+    repDisplay.innerText = '0';
+    repDisplay.setAttribute('data-prev-reps', '0');
+    stateDisplay.innerText = 'NEUTRAL';
+    feedbackDisplay.innerText = "Ready for new set";
+    feedbackDisplay.style.color = '#ffffff';
+    overlayFeedback.classList.remove('visible'); // Ensure overlay is hidden
+}
+
+function onResults(results) {
+    if (results.poseLandmarks && results.poseLandmarks.length > 0) {
+        // SMOOTHING
+        const smoothedLandmarks = smoother.smooth(results.poseLandmarks);
+        results.poseLandmarks = smoothedLandmarks; // Update results object for renderer too
+
+        // Update Logic
+        let fsmState = { state: 'neutral', reps: 0, isValid: true };
+        try {
+            fsmState = fsm.update(smoothedLandmarks);
+        } catch (err) {
+            console.warn("FSM update failed:", err);
+        }
+
+
+        let heuristicResult = { isGood: true, message: '' };
+        try {
+            heuristicResult = heuristics.analyze(smoothedLandmarks, fsmState.state, currentExercise);
+        } catch (err) {
+            console.warn("Heuristic analysis failed:", err);
+        }
+
+        // Strict Mode Logic
+        if (!heuristicResult.isGood) {
+            fsm.invalidateRep();
+        }
+
+        // Determine Rep Validation State for Rendering
+        const isFrameGood = heuristicResult.isGood && fsmState.isValid;
+        renderer.drawLandmarks(results, isFrameGood);
+
+        // Update UI
+        const angleText = fsmState.currentAngle ? ` | ${Math.round(fsmState.currentAngle)}°` : '';
+        stateDisplay.innerText = fsmState.state.toUpperCase() + angleText;
+        repDisplay.innerText = fsmState.reps;
+
+        // --- VISUALIZE ON-DEVICE LEARNING ---
+        if (adaptiveService && typeof isFrameGood !== 'undefined' && isFrameGood) {
+            try {
+                const aiParam = document.getElementById('ai-param');
+                const aiBaseline = document.getElementById('ai-baseline');
+                const aiCurrent = document.getElementById('ai-current');
+                const aiIndicator = document.getElementById('ai-indicator');
+
+                // Define limits to track per exercise
+                const trackingMap = {
+                    'squat': 'depth',
+                    'bicep_curl': 'flex', // Tracking min angle (peak curl)
+                    'shoulder_press': 'overhead', // Tracking max extension
+                    'push_up': 'arm_flex', // depth
+                    'neck_stretch': 'tilt'
+                };
+
+                const param = trackingMap[currentExercise];
+                if (param) {
+                    const baseline = adaptiveService.getDefaults()[currentExercise][param];
+                    const current = adaptiveService.get(currentExercise, param);
+
+                    aiParam.innerText = param.charAt(0).toUpperCase() + param.slice(1);
+                    aiBaseline.innerText = `${baseline}°`;
+                    aiCurrent.innerText = `${current}°`;
+
+                    // Show "Updating" if current differs from baseline significantly, 
+                    // or if we just recently adapted (simulated by checking difference)
+                    if (Math.abs(current - baseline) > 0) {
+                        aiIndicator.style.opacity = '1';
+                        aiIndicator.innerText = `Adapting to unique biomechanics...`;
+                    } else {
+                        aiIndicator.style.opacity = '0';
+                    }
+                }
+            } catch (e) {
+                console.warn("AI Viz Error", e);
+            }
+        }
+        // -------------------------------------
+
+        // --- SCORE TRACKING ---
+        // Only track score frames when active (not neutral)
+        if (fsmState.state !== 'neutral' && fsmState.state !== 'holding' && !isSetComplete) {
+            activeFrames++;
+            if (isFrameGood) goodFrames++;
+        }
+
+        // --- REP COMPLETION LOGIC ---
+        if (fsmState.reps > lastRepCount) {
+            // Calculate Score
+            let score = 0;
+            if (activeFrames > 0) {
+                score = Math.round((goodFrames / activeFrames) * 100);
+            } else {
+                score = 100; // Default if instant rep?
+            }
+
+            // Update Chart
+            updateChart(chart, `Rep ${fsmState.reps}`, score);
+
+            // Save to Local Profile
+            if (currentUser) {
+                ProfileService.saveSession(currentUser.id, currentExercise, fsmState.reps, score);
+            }
+
+            // Check Set Completion
+            if (fsmState.reps >= targetReps && !isSetComplete) {
+                isSetComplete = true;
+                audio.speak("Set Complete! Great job.");
+                // Victory sound could be added to audio.js
+                audio.playChirp('good');
+                feedbackDisplay.innerText = "SET COMPLETE!";
+                feedbackDisplay.style.color = "#00ffff";
+                overlayFeedback.classList.remove('visible'); // Hide any lingering feedback
+            } else {
+                audio.playChirp('good');
+            }
+
+            // Reset counters for next rep
+            activeFrames = 0;
+            goodFrames = 0;
+            lastRepCount = fsmState.reps;
+        }
+
+        if (isSetComplete) return;
+
+        if (isSetComplete) return;
+
+        // --- AUDIO DEBOUNCING ---
+        // Play error sound ONLY if we are transitioning from Good -> Bad
+        // or if enough time has passed (optional, but requested "beep only first time")
+
+        if (!isFrameGood) {
+            // Error case
+            if (wasLastFrameGood) {
+                // Rising edge of error
+                feedbackDisplay.innerText = heuristicResult.message || "Adjust posture";
+                feedbackDisplay.style.color = '#ff4444';
+
+                overlayFeedback.innerText = heuristicResult.message || "Adjust posture";
+                overlayFeedback.classList.add('visible');
+
+                audio.playError();
+                // Optional: Speak message if highly confident it's a specific error
+                if (heuristicResult.message) audio.speak(heuristicResult.message);
+            }
+        } else {
+            // Good case
+            feedbackDisplay.innerText = "Good Form";
+            feedbackDisplay.style.color = '#00ff88';
+            overlayFeedback.classList.remove('visible');
+        }
+
+        // Update state for next frame
+        wasLastFrameGood = isFrameGood;
+
+        // State changes
+        if (fsmState.state === 'bottom') {
+            // specific feedback for bottom
+        }
+
+        // Update Visual Guide Image
+        // Update Visual Guide Image
+        // updateVisualGuide(currentExercise, fsmState.state); // Removed
+    } else {
+        renderer.drawLandmarks(results); // Empty draw
+        feedbackDisplay.innerText = "Searching for body...";
+        feedbackDisplay.style.color = '#ffff00';
+    }
+}
+
+
+function updateFPS() {
+    frameCount++;
+    const now = Date.now();
+    if (now - lastFpsTime >= 1000) {
+        fpsDisplay.innerText = `${frameCount} FPS`;
+        frameCount = 0;
+        lastFpsTime = now;
+    }
+}
+
+// Initial static render
+// renderStaticSteps(currentExercise); // Removed
+
+// Start app
+// window.addEventListener('DOMContentLoaded', init); // Removed auto-init
