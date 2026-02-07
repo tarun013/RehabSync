@@ -25,7 +25,7 @@
 
 <body>
     <!-- Profile Selection View -->
-    <div id="profile-view" class="view-section active">
+    <div id="profile-view" class="view-section" style="display: none;">
         <div class="profile-container fade-in">
             <h1 class="profile-title">Who's Moving Today?</h1>
             <div class="profile-grid" id="profile-list">
@@ -58,7 +58,7 @@
     </div>
 
     <!-- Dashboard View -->
-    <div id="dashboard-view" class="view-section" style="display: none;">
+    <div id="dashboard-view" class="view-section active">
         <div class="dashboard-container">
             <header class="dash-header">
                 <div class="user-welcome">
@@ -66,13 +66,21 @@
                     <p>Ready to move?</p>
                 </div>
                 <div class="dash-actions">
-                    <button id="switch-profile-btn" class="secondary-btn small-btn">Switch Profile</button>
                     <button id="logout-btn" class="icon-btn" title="Logout">
                         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2"
                             fill="none">
                             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                             <polyline points="16 17 21 12 16 7"></polyline>
                             <line x1="21" y1="12" x2="9" y2="12"></line>
+                        </svg>
+                    </button>
+                    <button id="delete-profile-btn" class="icon-btn danger-btn" title="Delete Profile"
+                        style="color: #ff4444;">
+                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2"
+                            fill="none">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                            </path>
                         </svg>
                     </button>
                 </div>
@@ -139,16 +147,9 @@
                 </div>
             </header>
 
-            <main>
-                <div class="video-container">
-                    <video id="input_video" class="input_video" playsinline></video>
-                    <canvas id="output_canvas" class="output_canvas"></canvas>
-                    <div id="feedback-overlay" class="feedback-overlay"></div>
-                </div>
-
-                <aside class="controls-panel glass-panel">
-                    <h2>Analysis</h2>
-
+            <main class="workout-grid">
+                <!-- LEFT PANEL -->
+                <aside class="side-panel left-panel glass-panel">
                     <div class="metric-card">
                         <h3>Set Goal</h3>
                         <div class="set-controls">
@@ -157,6 +158,28 @@
                         </div>
                     </div>
 
+                    <div class="metric-card">
+                        <h3>Feedback</h3>
+                        <p id="feedback-text" class="feedback-text">Stand in frame to begin.</p>
+                    </div>
+
+                    <div class="metric-card guide-card">
+                        <h3><span class="guide-icon">📋</span> Protocol</h3>
+                        <div id="exercise-guide-text" class="guide-text">
+                            <!-- Guide steps injected here -->
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- CENTER PANEL (VIDEO) -->
+                <div class="video-container">
+                    <video id="input_video" class="input_video" playsinline></video>
+                    <canvas id="output_canvas" class="output_canvas"></canvas>
+                    <div id="feedback-overlay" class="feedback-overlay"></div>
+                </div>
+
+                <!-- RIGHT PANEL -->
+                <aside class="side-panel right-panel glass-panel">
                     <div class="metric-card">
                         <h3>Progress</h3>
                         <div class="progress-stats">
@@ -171,15 +194,30 @@
                         </div>
                     </div>
 
-
                     <div class="metric-card chart-card">
                         <h3>Posture Consistency</h3>
                         <canvas id="posture-chart"></canvas>
                     </div>
 
-                    <div class="metric-card">
-                        <h3>Feedback</h3>
-                        <p id="feedback-text" class="feedback-text">Stand in frame to begin.</p>
+                    <div class="metric-card ai-learning-card">
+                        <h3><span class="ai-icon">🧠</span> On-Device Learning</h3>
+                        <div class="ai-stats">
+                            <div class="stat-row">
+                                <span class="label">Param:</span>
+                                <span class="value" id="ai-param">Depth</span>
+                            </div>
+                            <div class="stat-row">
+                                <span class="label">Baseline:</span>
+                                <span class="value" id="ai-baseline">100°</span>
+                            </div>
+                            <div class="stat-row highlight">
+                                <span class="label">Personalized:</span>
+                                <span class="value" id="ai-current">100°</span>
+                            </div>
+                        </div>
+                        <div class="learning-indicator" id="ai-indicator" style="opacity: 0;">
+                            Updating Model...
+                        </div>
                     </div>
                 </aside>
             </main>
@@ -189,4 +227,5 @@
     <script type="module" src="js/main.js"></script>
 </body>
 
+</html>
 </html>
